@@ -1,66 +1,47 @@
-name: Convert .ram to MP3
+# .github/workflows/convert-ram-to-mp3.yml
+name: Convert RAM to MP3
 
 on:
+  push:
+    paths:
+      - '**/*.ram'
   workflow_dispatch:
-    inputs:
-      ram_file:
-        description: '変換したい .ram ファイル名（例: xrsample1.ram）'
-        required: true
 
 jobs:
   convert:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. リポジトリをチェックアウト
+      # リポジトリをフルクローン
       - name: Checkout repository
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
-      # 2. ffmpeg をインストール
-      - name: Install ffmpeg
+      # ffmpeg のインストール
+      - name: Install FFmpeg
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg libavcodec-extra
+          sudo apt-get install -y ffmpeg
 
-      # 3. RAMファイルからRAファイルURLを読み取り、MP3に変換
-      - name: Convert RAM to MP3
+      # .ram → .mp3 変換（カバーアートをビデオストリームとしてコピー）
+      - name: Convert .ram to .mp3
         run: |
-          RAM_FILE="${{ github.event.inputs.ram_file }}"
+          mkdir -p converted
+          find . -type f -name '*.ram' | while read f; do
+            out="converted/$(basename "${f%.*}.mp3")"
+            ffmpeg -y -i "$f" \
+              -codec:a libmp3lame -q:a 2 \
+              -codec:v copy \
+              -map 0 \
+              -id3v2_version 3 \
+              "$out"
+          done
 
-          if [ ! -f "$RAM_FILE" ]; then
-            echo "::error:: $RAM_FILE が見つかりません"
-            exit 1
-          fi
-
-          echo "::notice:: .ram ファイル内容:"
-          cat "$RAM_FILE"
-
-          # .ram ファイルから RA ストリームURLを抽出
-          STREAM_URL=$(grep -Eo 'https?://[^ ]+\.ra' "$RAM_FILE" || true)
-
-          if [ -z "$STREAM_URL" ]; then
-            echo "::error:: .ram 内に .ra URL が見つかりません"
-            exit 1
-          fi
-
-          echo "::notice:: RA ストリーム URL: $STREAM_URL"
-
-          # ファイル名をベースに MP3 変換
-          BASENAME="${RAM_FILE%.*}"
-          OUT_MP3="${BASENAME}.mp3"
-
-          ffmpeg -y -i "$STREAM_URL" -vn -c:a libmp3lame -b:a 192k "$OUT_MP3"
-
-          if [ ! -f "$OUT_MP3" ]; then
-            echo "::error:: MP3 の生成に失敗しました"
-            exit 1
-          fi
-
-      # 4. 生成されたMP3をコミット＆プッシュ
-      - name: Commit and push MP3 to repository
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "*.mp3"
-          git commit -m "Add converted MP3 from ${{ github.event.inputs.ram_file }}"
-          git push
+      # 生成された MP3 をコミット＆プッシュ
+      - name: Auto commit & push converted MP3
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "🔄 Convert RAM to MP3"
+          file_pattern: converted/**/*.mp3
+          push: true
