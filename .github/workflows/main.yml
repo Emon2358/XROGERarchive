@@ -1,10 +1,10 @@
-name: Convert .ram to MP3 with Cover
+name: Convert .ram to MP3
 
 on:
   workflow_dispatch:
     inputs:
       ram_file:
-        description: '.ram ファイル名（例: xrsample1.ram）'
+        description: '変換したい .ram ファイル名（例: xrsample1.ram）'
         required: true
 
 jobs:
@@ -16,36 +16,48 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2. ffmpeg と必要なツールをインストール
-      - name: Install dependencies
+      # 2. ffmpeg をインストール
+      - name: Install ffmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg libavcodec-extra
 
-      # 3. .ram → MP3 変換（.ram = RealAudio メタファイル）
-      - name: Convert .ram to MP3 with cover
+      # 3. RAMファイルからRAファイルURLを読み取り、MP3に変換
+      - name: Convert RAM to MP3
         run: |
           RAM_FILE="${{ github.event.inputs.ram_file }}"
 
-          # .ramは実体ファイル（.rm など）へのURLを含むテキストなので読み取る
-          STREAM_URL=$(cat "$RAM_FILE" | grep -Eo 'http[s]?://[^ ]+\.ra' || true)
-
-          if [ -z "$STREAM_URL" ]; then
-            echo "::error:: .ram 内に .ra ストリーム URL が見つかりません"
+          if [ ! -f "$RAM_FILE" ]; then
+            echo "::error:: $RAM_FILE が見つかりません"
             exit 1
           fi
 
-          echo "::notice:: RealAudio URL: $STREAM_URL"
+          echo "::notice:: .ram ファイル内容:"
+          cat "$RAM_FILE"
 
-          # ファイル名をベースに決定
+          # .ram ファイルから RA ストリームURLを抽出
+          STREAM_URL=$(grep -Eo 'https?://[^ ]+\.ra' "$RAM_FILE" || true)
+
+          if [ -z "$STREAM_URL" ]; then
+            echo "::error:: .ram 内に .ra URL が見つかりません"
+            exit 1
+          fi
+
+          echo "::notice:: RA ストリーム URL: $STREAM_URL"
+
+          # ファイル名をベースに MP3 変換
           BASENAME="${RAM_FILE%.*}"
           OUT_MP3="${BASENAME}.mp3"
 
-          # ストリームをMP3に変換（失敗時エラー）
           ffmpeg -y -i "$STREAM_URL" -vn -c:a libmp3lame -b:a 192k "$OUT_MP3"
 
-      # 4. 生成された MP3 をリポジトリに追加＆プッシュ
-      - name: Commit and push MP3
+          if [ ! -f "$OUT_MP3" ]; then
+            echo "::error:: MP3 の生成に失敗しました"
+            exit 1
+          fi
+
+      # 4. 生成されたMP3をコミット＆プッシュ
+      - name: Commit and push MP3 to repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
