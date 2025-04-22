@@ -1,5 +1,5 @@
 # .github/workflows/convert-ram-to-mp3.yml
-name: Convert RAM to MP3
+name: Convert RAM to MP3 with Fallback
 
 on:
   push:
@@ -17,25 +17,45 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install FFmpeg
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg curl jq
 
-      - name: Convert .ram to .mp3
+      - name: Convert .ram to .mp3 (with URL check & archive fallback)
         run: |
           mkdir -p converted
           find . -type f -name '*.ram' | while read f; do
             base="$(basename "$f" .ram)"
-            # .ram ファイルから最初の URL を抽出
             url="$(grep -Eo 'https?://[^ ]+' "$f" | head -1)"
+
             if [ -z "$url" ]; then
-              echo "⚠️ No URL found in $f, skipping"
+              echo "⚠️ No URL found in $f → skip"
               continue
             fi
-            echo "🔗 Converting $f → $url"
-            # 直接 URL を ffmpeg に渡して変換
-            ffmpeg -y -i "$url" \
+
+            echo "🔗 Processing URL: $url"
+
+            # 1) 生URLが生きているかチェック
+            if curl --head --silent --fail "$url" >/dev/null; then
+              input_url="$url"
+              echo "✅ URL reachable"
+            else
+              echo "❌ URL unreachable, trying Wayback Machine…"
+              # 2) Wayback Machine の最新スナップショットを取得
+              snapshot=$(curl -s "http://web.archive.org/cdx/search/cdx?url=$url&limit=1&output=json" \
+                         | jq -r 'if length>1 then .[1][1] else empty end')
+              if [ -n "$snapshot" ]; then
+                input_url="http://web.archive.org/web/${snapshot}/${url}"
+                echo "✅ Archive found: $input_url"
+              else
+                echo "⚠️ No archive for $url → skip"
+                continue
+              fi
+            fi
+
+            # 3) ffmpeg で変換
+            ffmpeg -y -i "$input_url" \
               -codec:a libmp3lame -q:a 2 \
               -codec:v copy \
               -map 0 \
@@ -46,6 +66,6 @@ jobs:
       - name: Auto commit & push converted MP3
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
-          commit_message: "🔄 Convert RAM to MP3"
+          commit_message: "🔄 Convert RAM to MP3 (with fallback)"
           file_pattern: converted/**/*.mp3
           push: true
