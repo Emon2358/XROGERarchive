@@ -12,33 +12,37 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # リポジトリをフルクローン
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-      # ffmpeg のインストール
       - name: Install FFmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
-      # .ram → .mp3 変換（カバーアートをビデオストリームとしてコピー）
       - name: Convert .ram to .mp3
         run: |
           mkdir -p converted
           find . -type f -name '*.ram' | while read f; do
-            out="converted/$(basename "${f%.*}.mp3")"
-            ffmpeg -y -i "$f" \
+            base="$(basename "$f" .ram)"
+            # .ram ファイルから最初の URL を抽出
+            url="$(grep -Eo 'https?://[^ ]+' "$f" | head -1)"
+            if [ -z "$url" ]; then
+              echo "⚠️ No URL found in $f, skipping"
+              continue
+            fi
+            echo "🔗 Converting $f → $url"
+            # 直接 URL を ffmpeg に渡して変換
+            ffmpeg -y -i "$url" \
               -codec:a libmp3lame -q:a 2 \
               -codec:v copy \
               -map 0 \
               -id3v2_version 3 \
-              "$out"
+              "converted/${base}.mp3"
           done
 
-      # 生成された MP3 をコミット＆プッシュ
       - name: Auto commit & push converted MP3
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
